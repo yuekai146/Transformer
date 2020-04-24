@@ -23,7 +23,7 @@ class Config:
     TGT_LAN = "de"
     
     # data paths
-    DATA_PATH="/data/de-en/"
+    DATA_PATH="./de-en/"
     SRC_RAW_TRAIN_PATH = DATA_PATH + "train." + SRC_LAN
     TGT_RAW_TRAIN_PATH = DATA_PATH + "train." + TGT_LAN
     SRC_RAW_VALID_PATH = DATA_PATH + "valid." + SRC_LAN
