@@ -5,7 +5,6 @@
 # LICENSE file in the root directory of this source tree.
 #
 
-import apex
 import os
 import time
 from collections import OrderedDict
@@ -40,6 +39,11 @@ class Trainer(object):
         assert config.epoch_size >= 1
         self.epoch_size = config.epoch_size
 
+        # network and criterion
+        net, criterion = model.get()
+        self.net = net
+        self.criterion = criterion
+
         # data iterators
         self.iterators = {}
         train_iter, valid_iter, SRC_TEXT, TGT_TEXT = dataset.load()
@@ -50,13 +54,6 @@ class Trainer(object):
         self.num_train = len(train_iter)
         self.SRC_TEXT = SRC_TEXT
         self.TGT_TEXT = TGT_TEXT
-        config.src_n_vocab = len(SRC_TEXT.vocab.itos)
-        config.tgt_n_vocab = len(TGT_TEXT.vocab.itos)
-
-        # network and criterion
-        net, criterion = model.get()
-        self.net = net
-        self.criterion = criterion
 
         torch.distributed.barrier()
 
@@ -74,10 +71,9 @@ class Trainer(object):
         torch.distributed.barrier()
         # Float16 / distributed
         if config.fp16:
-            self.init_amp()
             if config.multi_gpu:
                 logger.info("Using apex.parallel.DistributedDataParallel ...")
-                self.net = apex.parallel.DistributedDataParallel(self.net, delay_allreduce=True)
+                self.init_amp()
 
         # validation metrics
         self.best_metrics = {}
@@ -124,7 +120,6 @@ class Trainer(object):
         # check NaN
         if (loss != loss).data.any():
             logger.warning("NaN detected")
-            # exit()
 
         assert isinstance(config.accumulate_gradients, int)
 
@@ -138,24 +133,24 @@ class Trainer(object):
                 self.opt.step()
                 self.opt.optimizer.zero_grad()
         else:
-            if self.n_iter % config.accumulate_gradients == 0:
-                with apex.amp.scale_loss(loss, self.opt.optimizer) as scaled_loss:
-                    scaled_loss.backward()
+            with torch.cuda.amp.autocast():
+                loss = loss / config.accumulate_gradients
+            
+            self.scaler.scale(loss).backward()
+
+            if (self.n_iter + 1) % config.accumulate_gradients == 0:
                 if config.clip_grad_norm > 0:
-                    clip_grad_norm_(apex.amp.master_params(self.opt.optimizer), config.clip_grad_norm)
-                self.opt.step()
+                    self.scaler.unscale_(self.opt.optimizer)
+                    torch.nn.utils.clip_grad_norm_(self.net.parameters(), config.clip_grad_norm)
+                self.opt.step(self.scaler)
+                self.scaler.update()
                 self.opt.optimizer.zero_grad()
-            else:
-                with apex.amp.scale_loss(loss, self.opt.optimizer, delay_unscale=True) as scaled_loss:
-                    scaled_loss.backward()
     
 
     def init_amp(self):
         assert ( config.amp == 0 and config.fp16 is False ) or  ( config.amp in [1, 2, 3] and config.fp16 is True )
-        self.net, self.opt.optimizer = apex.amp.initialize(
-                self.net, self.opt.optimizer,
-                opt_level='O{}'.format(config.amp)
-                )
+        self.scaler = torch.cuda.amp.GradScaler()
+
 
     def iter(self):
         """
@@ -255,16 +250,16 @@ class Trainer(object):
 
             if network_only == False:
                 # reload optimizers
+                self.opt.optimizer.load_state_dict(ckpt["opt"]["optimizer_state_dict"])
                 for k in ckpt["opt"].keys():
                     if k != "optimizer_state_dict":
                         setattr(self.opt, k, ckpt["opt"][k])
 
                 # reload main metrics
-                if config.optimizer_only is False:
-                    self.epoch = ckpt['epoch'] + 1
-                    self.n_total_iter = ckpt['n_total_iter']
-                    self.best_metrics = ckpt['best_metrics']
-                    self.early_stopping_metrics = ckpt['early_stopping_metrics']
+                self.epoch = ckpt['epoch'] + 1
+                self.n_total_iter = ckpt['n_total_iter']
+                self.best_metrics = ckpt['best_metrics']
+                self.early_stopping_metrics = ckpt['early_stopping_metrics']
             
             logger.warning(f"Checkpoint reloaded. Resuming at epoch {self.epoch} / iteration {self.n_total_iter} ...")
 
@@ -353,25 +348,63 @@ class Enc_Dec_Trainer(Trainer):
         """
         self.net.train()
         self.criterion.train()
-        if config.multi_gpu:
-            self.net.module.train()
         batch = get_batch(
                 raw_batch.src, raw_batch.tgt,
                 self.SRC_TEXT.vocab, self.TGT_TEXT.vocab
                 )
         batch_size = batch["src"].size(0)
         del raw_batch
-        # Get a batch of input data
         
-        # Network forward step
-        tensor = self.net(batch['src'], batch['src_mask'], batch['tgt'], batch['tgt_mask'])
+        assert isinstance(config.accumulate_gradients, int)
 
-        # loss
-        loss, nll_loss = self.criterion(tensor, batch['target'], batch['target_mask'])
+        if config.fp16 == False:
+            tensor = self.net(batch['src'], batch['src_mask'], batch['tgt'], batch['tgt_mask'])
+
+            # loss
+            loss, nll_loss = self.criterion(
+                    self.net(
+                        batch['src'], batch['src_mask'],
+                        batch['tgt'], batch['tgt_mask']
+                        ), batch['target'], batch['target_mask']
+                    )
+            loss = loss / config.accumulate_gradients
+            
+            # check NaN
+            if (loss != loss).data.any():
+                logger.warning("NaN detected")
+
+            # regular optimization
+            loss.backward()
+            if (self.n_iter + 1) % config.accumulate_gradients == 0:
+                if config.clip_grad_norm > 0:
+                    for name in names:
+                        clip_grad_norm_(self.net.parameters(), config.clip_grad_norm)
+                self.opt.step()
+                self.opt.optimizer.zero_grad()
+        else:
+            loss, nll_loss = self.criterion(self.net(
+                batch['src'], batch['src_mask'],
+                batch['tgt'], batch['tgt_mask']
+                ), batch['target'], batch['target_mask']
+            )
+            loss = loss / config.accumulate_gradients
+            
+            # check NaN
+            if (loss != loss).data.any():
+                logger.warning("NaN detected")
+            self.scaler.scale(loss).backward()
+
+            if (self.n_iter + 1) % config.accumulate_gradients == 0:
+                if config.clip_grad_norm > 0:
+                    self.scaler.unscale_(self.opt.optimizer)
+                    torch.nn.utils.clip_grad_norm_(self.net.parameters(), config.clip_grad_norm)
+                self.opt.step(self.scaler)
+                self.scaler.update()
+                self.opt.optimizer.zero_grad()
+
+
         self.stats[('MT-%s-%s-loss' % (config.SRC_LAN, config.TGT_LAN))].append(loss.item())
         self.stats[('MT-%s-%s-ppl' % (config.SRC_LAN, config.TGT_LAN))].append(nll_loss.exp().item())
-        # optimize
-        self.optimize(loss)
 
         # number of processed sentences / words
         n_tokens = batch["n_tokens"]
@@ -382,7 +415,7 @@ class Enc_Dec_Trainer(Trainer):
         del batch
         del loss
         del nll_loss
-        del tensor
+        #torch.cuda.empty_cache()
 
     
     def valid_step(self):
@@ -402,10 +435,7 @@ class Enc_Dec_Trainer(Trainer):
         with torch.no_grad():
             self.net.eval()
             self.criterion.eval()
-            if config.multi_gpu:
-                net = self.net.module
-            else:
-                net = self.net
+            net = self.net
 
             for i_batch, raw_batch in enumerate(data_iter):
                 # generate batch
@@ -443,7 +473,8 @@ class Enc_Dec_Trainer(Trainer):
                 del inputs
                 del loss_inputs
                 del batch
-                #torch.cuda.empty_cache()
+
+                torch.cuda.empty_cache()
 
         # compute perplexity and prediction accuracy
         scores = {}

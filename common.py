@@ -61,7 +61,7 @@ class Config:
     opt_eps = 1e-9
 
     # For fp16 training
-    fp16 = True # Whether to use fp16 training
+    fp16 = False # Whether to use fp16 training
     amp = 2 # Level of optimization
 
     # For trainer
