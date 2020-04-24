@@ -1,7 +1,7 @@
 ## Requirements
 - Pytorch version >= 1.2.0 (**https://pytorch.org/**)
 - numpy (pip3 install --user numpy)
-- apex (**https://github.com/apex/apex**)
+- apex (**https://github.com/NVIDIA/apex**)
 - fairseq version >= 0.8.0 (pip3 install --user fairseq) (for test purpose, **https://github.com/pytorch/fairseq**)
 - Moses (For preprocessing sentence pairs, **https://github.com/moses-smt/mosesdecoder**)
 
