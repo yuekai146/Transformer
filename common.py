@@ -5,7 +5,7 @@ class Config:
     decoder_num_layers = 6
     d_model = 512
     d_ff = 1024
-    num_heads = 8
+    num_heads = 4
     dropout = 0.3
     label_smoothing = 0.1
     share_decoder_generator_embed = True
@@ -73,14 +73,14 @@ class Config:
     reload_network_only = False
     optimizer_only = True
     clip_grad_norm = 0.0
-    accumulate_gradients = 2
+    accumulate_gradients = 1
     save_periodic = 1
     valid_metrics = {"ppl":-1}
     init_metric = -1e12
     print_interval = 5
     # To early stop if validation performance did not
     # improve for decrease_counts_max epochs
-    decrease_counts_max = 1
+    decrease_counts_max = 10
     stopping_criterion = "ppl"
 
 config = Config()
