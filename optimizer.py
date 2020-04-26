@@ -18,13 +18,16 @@ class Noam_Opt:
             self.init_lr = init_lr
         self.decay_factor = lr * self.warmup ** 0.5
 
-    def step(self):
+    def step(self, scaler=None):
         # Update network parameters and rate
         rate = self.rate()
         for p in self.optimizer.param_groups:
             p['lr'] = rate
         self._rate = rate
-        self.optimizer.step()
+        if scaler is None:
+            self.optimizer.step()
+        else:
+            scaler.step(self.optimizer)
         self._step += 1
 
     def rate(self, step=None):

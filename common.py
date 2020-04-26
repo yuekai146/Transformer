@@ -4,9 +4,9 @@ class Config:
     encoder_num_layers = 6
     decoder_num_layers = 6
     d_model = 512
-    d_ff = 2048
+    d_ff = 1024
     num_heads = 8
-    dropout = 0.1
+    dropout = 0.3
     label_smoothing = 0.1
     share_decoder_generator_embed = True
     share_all_embeddings = True
@@ -19,8 +19,8 @@ class Config:
     SPECIAL_TOKENS = [PAD, BOS, EOS, UNK]
     N_SPECIAL_TOKENS = len(SPECIAL_TOKENS)
     MAX_LEN = 250 
-    SRC_LAN = "en"
-    TGT_LAN = "de"
+    SRC_LAN = "de"
+    TGT_LAN = "en"
     
     # data paths
     DATA_PATH="./de-en/"
@@ -48,12 +48,12 @@ class Config:
     if share_all_embeddings:
         assert src_n_vocab == tgt_n_vocab
     BATCH_SIZE = 128
-    tokens_per_batch = 4096 # if tokens_per_batch > 0, ignore BATCH_SIZE
+    tokens_per_batch = 8192 # if tokens_per_batch > 0, ignore BATCH_SIZE
     max_batch_size = 0 
 
     # For optimizer
     opt_warmup = 4000
-    lr = 7e-4
+    lr = 5e-4
     init_lr = 1e-7
     beta1 = 0.9
     beta2 = 0.98
@@ -61,7 +61,7 @@ class Config:
     opt_eps = 1e-9
 
     # For fp16 training
-    fp16 = False # Whether to use fp16 training
+    fp16 = True # Whether to use fp16 training
     amp = 2 # Level of optimization
 
     # For trainer
@@ -80,7 +80,7 @@ class Config:
     print_interval = 5
     # To early stop if validation performance did not
     # improve for decrease_counts_max epochs
-    decrease_counts_max = 10
+    decrease_counts_max = 1
     stopping_criterion = "ppl"
 
 config = Config()

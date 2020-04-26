@@ -3,8 +3,8 @@ function test () {
 	FAIRSEQ_PATH=/data/fairseq
 
 	python3 translate.py -ckpt checkpoints/checkpoint_best_ppl.pth \
-		-text ./de-en/test.en \
-		-ref_text ./de-en/test.de \
+		-text ./de-en/test.de \
+		-ref_text ./de-en/test.en \
 		--max_batch_size 0 \
 		--tokens_per_batch 2000 \
 		-max_len 200 > total.out
